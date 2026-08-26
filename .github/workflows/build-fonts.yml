@@ -1,0 +1,59 @@
+name: Build fonts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ci/build-fonts
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            fontforge \
+            ttfautohint \
+            python3-pip
+
+      - name: Install fontTools
+        run: |
+          python3 -m pip install --break-system-packages 'fonttools==3.44.0'
+          ttx --version
+
+      - name: Show tool versions
+        run: |
+          fontforge --version
+          ttfautohint --version
+          python3 --version
+          ttx --version
+
+      - name: Build HackGen
+        run: |
+          chmod +x \
+            make_hackgen.sh \
+            hackgen_generator.sh \
+            copyright.sh \
+            os2_patch.sh \
+            cmap_patch.sh
+          ./make_hackgen.sh
+
+      - name: Verify generated fonts
+        run: |
+          test -d build
+          find build -maxdepth 1 -type f -name 'HackGen*.ttf' -print
+          count=$(find build -maxdepth 1 -type f -name 'HackGen*.ttf' | wc -l)
+          test "$count" -gt 0
+
+      - name: Upload fonts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hackgen-v2.10.0
+          path: build/*.ttf
+          if-no-files-found: error
