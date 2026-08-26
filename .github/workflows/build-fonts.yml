@@ -19,7 +19,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             fontforge \
-            ttfautohint
+            ttfautohint \
+            unzip
 
       - name: Set up Python 3.8
         uses: actions/setup-python@v5
@@ -76,7 +77,39 @@ jobs:
           test -d build
           find build -maxdepth 1 -type f -name 'HackGen*.ttf' -print
           count=$(find build -maxdepth 1 -type f -name 'HackGen*.ttf' | wc -l)
-          test "$count" -gt 0
+          test "$count" -eq 12
+
+      - name: Download official v2.10.0 release
+        run: |
+          mkdir -p reference/normal reference/nf
+          curl --fail --location --retry 3 \
+            --output /tmp/HackGen_v2.10.0.zip \
+            https://github.com/yuru7/HackGen/releases/download/v2.10.0/HackGen_v2.10.0.zip
+          curl --fail --location --retry 3 \
+            --output /tmp/HackGen_NF_v2.10.0.zip \
+            https://github.com/yuru7/HackGen/releases/download/v2.10.0/HackGen_NF_v2.10.0.zip
+          unzip -q /tmp/HackGen_v2.10.0.zip -d reference/normal
+          unzip -q /tmp/HackGen_NF_v2.10.0.zip -d reference/nf
+          find reference -type f -name 'HackGen*.ttf' -print
+
+      - name: Compare with official v2.10.0
+        run: |
+          python tools/compare_fonts.py \
+            --generated build \
+            --reference reference \
+            --json font-comparison.json \
+            --markdown font-comparison.md
+          cat font-comparison.md
+
+      - name: Upload comparison report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: font-comparison-v2.10.0
+          path: |
+            font-comparison.json
+            font-comparison.md
+          if-no-files-found: warn
 
       - name: Upload fonts
         uses: actions/upload-artifact@v4
