@@ -19,19 +19,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             fontforge \
-            ttfautohint \
-            python3-pip
+            ttfautohint
+
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
 
       - name: Install fontTools
         run: |
-          python3 -m pip install --break-system-packages 'fonttools==3.44.0'
+          python -m pip install 'fonttools==3.44.0'
           ttx --version
 
       - name: Show tool versions
         run: |
           fontforge --version
           ttfautohint --version
-          python3 --version
+          python --version
           ttx --version
 
       - name: Build HackGen
