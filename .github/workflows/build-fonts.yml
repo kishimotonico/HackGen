@@ -1,5 +1,6 @@
 name: Build fonts
 
+# Retriggered after the GitHub Actions outage on 2026-08-27.
 on:
   workflow_dispatch:
   push:
