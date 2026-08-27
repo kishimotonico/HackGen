@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 import argparse
 import json
-from collections import defaultdict
 from pathlib import Path
 
 import freetype
 from fontTools.ttLib import TTFont
 
 SIZES = (12, 16, 24, 32, 48)
-LOAD_FLAGS = freetype.FT_LOAD_DEFAULT | freetype.FT_LOAD_TARGET_NORMAL
+MODES = {
+    "hinted": freetype.FT_LOAD_DEFAULT | freetype.FT_LOAD_TARGET_NORMAL,
+    "unhinted": freetype.FT_LOAD_NO_HINTING | freetype.FT_LOAD_NO_AUTOHINT,
+}
+THRESHOLDS = (0.5, 1.0, 2.0, 5.0, 10.0)
 
 
 def find_fonts(root):
@@ -20,12 +23,12 @@ def glyph_bytes(font, name):
     return glyf[name].compile(glyf)
 
 
-def render(face, codepoint, size):
+def render(face, codepoint, size, load_flags):
     face.set_pixel_sizes(0, size)
     index = face.get_char_index(codepoint)
     if not index:
         return None
-    face.load_glyph(index, LOAD_FLAGS)
+    face.load_glyph(index, load_flags)
     advance = face.glyph.advance.x
     face.glyph.render(freetype.FT_RENDER_MODE_NORMAL)
     slot = face.glyph
@@ -83,6 +86,70 @@ def compare_render(a, b):
     }
 
 
+def compare_mode(face_a, face_b, candidates, total_mapped, size, load_flags):
+    differing = []
+    exact = 0
+    bitmap_exact = 0
+    bbox_diff = 0
+    advance_diff = 0
+    changed_fraction_sum = 0.0
+    mean_gray_sum = 0.0
+    max_changed_fraction = 0.0
+    max_mean_gray = 0.0
+    max_abs_gray = 0
+    thresholds = {str(t): 0 for t in THRESHOLDS}
+
+    for cp in candidates:
+        diff = compare_render(render(face_a, cp, size, load_flags), render(face_b, cp, size, load_flags))
+        if diff.get("exact"):
+            exact += 1
+        if diff.get("bitmap_exact"):
+            bitmap_exact += 1
+        if diff.get("missing"):
+            differing.append({"codepoint": cp, **diff})
+            continue
+        if not diff["bbox_same"]:
+            bbox_diff += 1
+        if not diff["advance_same"]:
+            advance_diff += 1
+        if diff["changed_pixels"]:
+            differing.append({"codepoint": cp, **diff})
+            changed_fraction_sum += diff["changed_fraction"]
+            mean_gray_sum += diff["mean_abs_gray_delta"]
+            max_changed_fraction = max(max_changed_fraction, diff["changed_fraction"])
+            max_mean_gray = max(max_mean_gray, diff["mean_abs_gray_delta"])
+            max_abs_gray = max(max_abs_gray, diff["max_abs_gray_delta"])
+            for threshold in THRESHOLDS:
+                if diff["mean_abs_gray_delta"] >= threshold:
+                    thresholds[str(threshold)] += 1
+
+    differing.sort(
+        key=lambda x: (x.get("mean_abs_gray_delta", 0), x.get("changed_fraction", 0), x.get("max_abs_gray_delta", 0)),
+        reverse=True,
+    )
+    diff_count = len(differing)
+    exact_total = total_mapped - len(candidates) + exact
+    bitmap_exact_total = total_mapped - len(candidates) + bitmap_exact
+    return {
+        "mapped_glyphs": total_mapped,
+        "candidate_glyphs": len(candidates),
+        "exact_render_glyphs": exact_total,
+        "exact_render_fraction": exact_total / total_mapped if total_mapped else 1.0,
+        "bitmap_exact_glyphs": bitmap_exact_total,
+        "bitmap_exact_fraction": bitmap_exact_total / total_mapped if total_mapped else 1.0,
+        "bitmap_diff_glyphs": diff_count,
+        "bbox_diff_candidates": bbox_diff,
+        "advance_diff_candidates": advance_diff,
+        "mean_changed_fraction_among_diff": changed_fraction_sum / diff_count if diff_count else 0.0,
+        "mean_gray_delta_among_diff": mean_gray_sum / diff_count if diff_count else 0.0,
+        "max_changed_fraction": max_changed_fraction,
+        "max_mean_abs_gray_delta": max_mean_gray,
+        "max_abs_gray_delta": max_abs_gray,
+        "mean_gray_threshold_counts": thresholds,
+        "worst_glyphs": differing[:50],
+    }
+
+
 def compare_font(generated_path, reference_path):
     ga = TTFont(str(generated_path), lazy=False)
     rb = TTFont(str(reference_path), lazy=False)
@@ -106,71 +173,17 @@ def compare_font(generated_path, reference_path):
 
     face_a = freetype.Face(str(generated_path))
     face_b = freetype.Face(str(reference_path))
-    by_size = {}
-
-    for size in SIZES:
-        differing = []
-        exact = 0
-        bitmap_exact = 0
-        bbox_diff = 0
-        advance_diff = 0
-        changed_fraction_sum = 0.0
-        mean_gray_sum = 0.0
-        max_changed_fraction = 0.0
-        max_mean_gray = 0.0
-        max_abs_gray = 0
-
-        for cp in candidates:
-            diff = compare_render(render(face_a, cp, size), render(face_b, cp, size))
-            if diff.get("exact"):
-                exact += 1
-            if diff.get("bitmap_exact"):
-                bitmap_exact += 1
-            if diff.get("missing"):
-                differing.append({"codepoint": cp, **diff})
-                continue
-            if not diff["bbox_same"]:
-                bbox_diff += 1
-            if not diff["advance_same"]:
-                advance_diff += 1
-            if diff["changed_pixels"]:
-                differing.append({"codepoint": cp, **diff})
-                changed_fraction_sum += diff["changed_fraction"]
-                mean_gray_sum += diff["mean_abs_gray_delta"]
-                max_changed_fraction = max(max_changed_fraction, diff["changed_fraction"])
-                max_mean_gray = max(max_mean_gray, diff["mean_abs_gray_delta"])
-                max_abs_gray = max(max_abs_gray, diff["max_abs_gray_delta"])
-
-        differing.sort(
-            key=lambda x: (x.get("mean_abs_gray_delta", 0), x.get("changed_fraction", 0), x.get("max_abs_gray_delta", 0)),
-            reverse=True,
-        )
-        diff_count = len(differing)
-        total_mapped = len(common)
-        exact_total = total_mapped - len(candidates) + exact
-        bitmap_exact_total = total_mapped - len(candidates) + bitmap_exact
-        by_size[str(size)] = {
-            "mapped_glyphs": total_mapped,
-            "candidate_glyphs": len(candidates),
-            "exact_render_glyphs": exact_total,
-            "exact_render_fraction": exact_total / total_mapped if total_mapped else 1.0,
-            "bitmap_exact_glyphs": bitmap_exact_total,
-            "bitmap_exact_fraction": bitmap_exact_total / total_mapped if total_mapped else 1.0,
-            "bitmap_diff_glyphs": diff_count,
-            "bbox_diff_candidates": bbox_diff,
-            "advance_diff_candidates": advance_diff,
-            "mean_changed_fraction_among_diff": changed_fraction_sum / diff_count if diff_count else 0.0,
-            "mean_gray_delta_among_diff": mean_gray_sum / diff_count if diff_count else 0.0,
-            "max_changed_fraction": max_changed_fraction,
-            "max_mean_abs_gray_delta": max_mean_gray,
-            "max_abs_gray_delta": max_abs_gray,
-            "worst_glyphs": differing[:25],
-        }
+    modes = {}
+    for mode_name, load_flags in MODES.items():
+        by_size = {}
+        for size in SIZES:
+            by_size[str(size)] = compare_mode(face_a, face_b, candidates, len(common), size, load_flags)
+        modes[mode_name] = by_size
 
     return {
         "file": generated_path.name,
         "candidate_codepoints": candidates,
-        "sizes": by_size,
+        "modes": modes,
     }
 
 
@@ -193,6 +206,7 @@ def main():
     report = {
         "freetype_version": list(freetype.version()),
         "sizes": list(SIZES),
+        "thresholds": list(THRESHOLDS),
         "results": results,
     }
     Path(args.json).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -202,35 +216,36 @@ def main():
         "",
         "FreeType version: `%s`" % ".".join(map(str, freetype.version())),
         "",
-        "Only glyphs whose raw glyf data, hmtx, or mapping differs are explicitly rasterized; unchanged glyphs are counted as exact because global hint/layout tables were already verified equal.",
+        "Hinted mode uses normal FreeType hinting. Unhinted mode disables both native and auto hinting, helping distinguish base-outline changes from ttfautohint-version effects.",
         "",
     ]
-    for size in SIZES:
-        lines.extend([
-            "## %d px" % size,
-            "",
-            "| Font | candidate | bitmap diff | exact all | bbox Δ | advance Δ | mean changed pixels | max changed pixels | mean gray Δ | max mean gray Δ |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-        ])
-        for item in results:
-            s = item["sizes"][str(size)]
-            lines.append(
-                "| %s | %d | %d | %.3f%% | %d | %d | %.3f%% | %.3f%% | %.3f/255 | %.3f/255 |" % (
-                    item["file"], len(item["candidate_codepoints"]), s["bitmap_diff_glyphs"],
-                    s["bitmap_exact_fraction"] * 100, s["bbox_diff_candidates"], s["advance_diff_candidates"],
-                    s["mean_changed_fraction_among_diff"] * 100, s["max_changed_fraction"] * 100,
-                    s["mean_gray_delta_among_diff"], s["max_mean_abs_gray_delta"],
+    for mode_name in MODES:
+        lines.extend(["# %s" % mode_name.capitalize(), ""])
+        for size in SIZES:
+            lines.extend([
+                "## %d px" % size,
+                "",
+                "| Font | candidate | bitmap diff | exact all | bbox Δ | advance Δ | mean gray Δ | >=1/255 | >=5/255 | max mean gray Δ |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ])
+            for item in results:
+                s = item["modes"][mode_name][str(size)]
+                lines.append(
+                    "| %s | %d | %d | %.3f%% | %d | %d | %.3f/255 | %d | %d | %.3f/255 |" % (
+                        item["file"], len(item["candidate_codepoints"]), s["bitmap_diff_glyphs"],
+                        s["bitmap_exact_fraction"] * 100, s["bbox_diff_candidates"], s["advance_diff_candidates"],
+                        s["mean_gray_delta_among_diff"], s["mean_gray_threshold_counts"]["1.0"],
+                        s["mean_gray_threshold_counts"]["5.0"], s["max_mean_abs_gray_delta"],
+                    )
                 )
-            )
-        lines.append("")
-
-    lines.extend(["## Worst raster differences", ""])
-    for item in results:
-        lines.append("### %s" % item["file"])
-        for size in (16, 32):
             lines.append("")
-            lines.append("**%d px**" % size)
-            worst = item["sizes"][str(size)]["worst_glyphs"][:10]
+
+    lines.extend(["# Worst hinted raster differences", ""])
+    for item in results:
+        lines.append("## %s" % item["file"])
+        for size in (16, 24, 32):
+            lines.append("\n**%d px**" % size)
+            worst = item["modes"]["hinted"][str(size)]["worst_glyphs"][:10]
             if not worst:
                 lines.append("- none")
                 continue
