@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/compare-existing-fonts.yml'
       - 'tools/compare_rendering.py'
+      - 'tools/compare_unhinted.py'
   workflow_dispatch:
 
 jobs:
@@ -52,20 +53,20 @@ jobs:
           unzip -q /tmp/HackGen_v2.10.0.zip -d reference/normal
           unzip -q /tmp/HackGen_NF_v2.10.0.zip -d reference/nf
 
-      - name: Compare hinted and unhinted rendering
+      - name: Compare unhinted 24px rendering
         run: |
-          python tools/compare_rendering.py \
+          python tools/compare_unhinted.py \
             --generated build \
             --reference reference \
-            --json render-comparison.json \
-            --markdown render-comparison.md
-          cat render-comparison.md
+            --json unhinted-comparison.json \
+            --markdown unhinted-comparison.md
+          cat unhinted-comparison.md
 
-      - name: Upload rendering comparison
+      - name: Upload unhinted comparison
         uses: actions/upload-artifact@v4
         with:
-          name: render-comparison-hinted-unhinted
+          name: unhinted-comparison-24px
           path: |
-            render-comparison.json
-            render-comparison.md
+            unhinted-comparison.json
+            unhinted-comparison.md
           if-no-files-found: error
