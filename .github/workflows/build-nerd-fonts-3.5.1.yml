@@ -53,6 +53,16 @@ jobs:
           cp "$regular" source/HackNerdFont-Regular.ttf
           cp "$bold" source/HackNerdFont-Bold.ttf
 
+      - name: Apply Nerd Fonts 3.5.1 glyph ranges
+        run: |
+          sed -i \
+            -e 's/SelectMore(0uE5FA, 0uE6B7)/SelectMore(0uE5FA, 0uE6FF)/' \
+            -e 's/SelectMore(0uE700, 0uE8E3)/SelectMore(0uE700, 0uE958)/' \
+            -e 's/SelectMore(0uF300, 0uF381)/SelectMore(0uF300, 0uF385)/' \
+            -e 's/SelectMore(0uEA60, 0uEC1E)/SelectMore(0uEA60, 0uEC84)/' \
+            hackgen_generator.sh
+          grep -A30 'select_nerd_symbols=' hackgen_generator.sh
+
       - name: Record Nerd Font source coverage
         run: |
           python - <<'PY'
@@ -60,14 +70,14 @@ jobs:
           from fontTools.ttLib import TTFont
 
           ranges = [
-              ('Seti-UI + Custom', 0xE5FA, 0xE6B7),
-              ('Devicons', 0xE700, 0xE8E3),
+              ('Seti-UI + Custom', 0xE5FA, 0xE6FF),
+              ('Devicons', 0xE700, 0xE958),
               ('Font Awesome Extension', 0xE200, 0xE2A9),
               ('Weather', 0xE300, 0xE3E3),
-              ('Codicons', 0xEA60, 0xEC1E),
+              ('Codicons', 0xEA60, 0xEC84),
               ('Progress Indicators', 0xEE00, 0xEE0B),
               ('Font Awesome', 0xED00, 0xF2FF),
-              ('Font Logos', 0xF300, 0xF381),
+              ('Font Logos', 0xF300, 0xF385),
               ('Octicons', 0xF400, 0xF533),
               ('Material Design', 0xF0001, 0xF1AF0),
           ]
@@ -82,8 +92,6 @@ jobs:
                   count = sum(cp in cmap for cp in range(start, end + 1))
                   print('  %-24s %4d mapped in U+%04X..U+%04X' % (name, count, start, end))
 
-              # Nerd Fonts primarily occupies the BMP and supplementary private-use
-              # areas. Keep the small standard-codepoint Nerd symbols as well.
               nerd_codepoints = sorted(
                   cp for cp in cmap
                   if (0xE000 <= cp <= 0xF8FF)
