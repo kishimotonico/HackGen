@@ -1,11 +1,7 @@
-name: Build fonts
+name: Build v2.10 baseline
 
-# Retriggered after the GitHub Actions outage on 2026-08-27.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - ci/build-fonts
 
 jobs:
   build:
