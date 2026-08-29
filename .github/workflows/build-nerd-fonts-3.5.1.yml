@@ -7,6 +7,7 @@ on:
       - ci/build-fonts
     paths:
       - '.github/workflows/build-nerd-fonts-3.5.1.yml'
+      - 'tools/compare_nerd_update.py'
       - 'hackgen_generator.sh'
       - 'make_hackgen.sh'
       - 'copyright.sh'
@@ -34,6 +35,12 @@ jobs:
       - name: Install Python tools
         run: python -m pip install 'fonttools==3.44.0'
 
+      - name: Build v2.10 baseline with Nerd Fonts 3.3.0
+        run: |
+          chmod +x make_hackgen.sh hackgen_generator.sh copyright.sh os2_patch.sh cmap_patch.sh
+          ./make_hackgen.sh 2>&1 | tee build-nerd-fonts-3.3.0.log
+          mv build build-3.3.0
+
       - name: Download Nerd Fonts 3.5.1 Hack
         run: |
           curl --fail --location --retry 3 \
@@ -42,7 +49,6 @@ jobs:
           echo 'fa24da7de7cefe7766614d27762570b20453c852fc1d5b657111666df9a5e449  /tmp/Hack.zip' | sha256sum --check -
           mkdir -p /tmp/nerd-hack
           unzip -q /tmp/Hack.zip -d /tmp/nerd-hack
-          find /tmp/nerd-hack -maxdepth 1 -type f -name '*.ttf' -print | sort
 
       - name: Select Nerd Font source files
         run: |
@@ -61,86 +67,53 @@ jobs:
             -e 's/SelectMore(0uF300, 0uF381)/SelectMore(0uF300, 0uF385)/' \
             -e 's/SelectMore(0uEA60, 0uEC1E)/SelectMore(0uEA60, 0uEC84)/' \
             hackgen_generator.sh
-          grep -A30 'select_nerd_symbols=' hackgen_generator.sh
 
       - name: Record Nerd Font source coverage
         run: |
           python - <<'PY'
           import json
           from fontTools.ttLib import TTFont
-
-          ranges = [
-              ('Seti-UI + Custom', 0xE5FA, 0xE6FF),
-              ('Devicons', 0xE700, 0xE958),
-              ('Font Awesome Extension', 0xE200, 0xE2A9),
-              ('Weather', 0xE300, 0xE3E3),
-              ('Codicons', 0xEA60, 0xEC84),
-              ('Progress Indicators', 0xEE00, 0xEE0B),
-              ('Font Awesome', 0xED00, 0xF2FF),
-              ('Font Logos', 0xF300, 0xF385),
-              ('Octicons', 0xF400, 0xF533),
-              ('Material Design', 0xF0001, 0xF1AF0),
-          ]
           specials = {0x23FB, 0x23FC, 0x23FD, 0x23FE, 0x2630, 0x2665, 0x26A1, 0x2B58}
-
           expected = {}
           for style in ('Regular', 'Bold'):
-              path = 'source/HackNerdFont-%s.ttf' % style
-              cmap = TTFont(path).getBestCmap() or {}
-              print(path, 'mapped=', len(cmap), 'max=U+%X' % max(cmap))
-              for name, start, end in ranges:
-                  count = sum(cp in cmap for cp in range(start, end + 1))
-                  print('  %-24s %4d mapped in U+%04X..U+%04X' % (name, count, start, end))
-
-              nerd_codepoints = sorted(
-                  cp for cp in cmap
-                  if (0xE000 <= cp <= 0xF8FF)
-                  or (0xF0000 <= cp <= 0xFFFFD)
-                  or cp in specials
-              )
-              expected[style] = nerd_codepoints
-              print('  Nerd glyph coverage:', len(nerd_codepoints), 'codepoints')
-
+              cmap = TTFont('source/HackNerdFont-%s.ttf' % style).getBestCmap() or {}
+              expected[style] = sorted(cp for cp in cmap if (0xE000 <= cp <= 0xF8FF) or (0xF0000 <= cp <= 0xFFFFD) or cp in specials)
+              print(style, 'Nerd glyph coverage:', len(expected[style]))
           with open('/tmp/nerd-fonts-3.5.1-coverage.json', 'w') as f:
               json.dump(expected, f)
           PY
 
-      - name: Build HackGen
+      - name: Build HackGen with Nerd Fonts 3.5.1
         run: |
-          chmod +x make_hackgen.sh hackgen_generator.sh copyright.sh os2_patch.sh cmap_patch.sh
           ./make_hackgen.sh 2>&1 | tee build-nerd-fonts-3.5.1.log
+          mv build build-3.5.1
 
       - name: Verify generated fonts
         run: |
-          count=$(find build -maxdepth 1 -type f -name 'HackGen*.ttf' | wc -l)
-          test "$count" -eq 12
+          test "$(find build-3.5.1 -maxdepth 1 -type f -name 'HackGen*.ttf' | wc -l)" -eq 12
           python - <<'PY'
           import json
           from pathlib import Path
           from fontTools.ttLib import TTFont
-
           with open('/tmp/nerd-fonts-3.5.1-coverage.json') as f:
               expected = {style: set(cps) for style, cps in json.load(f).items()}
-
           failed = False
-          for path in sorted(Path('build').glob('HackGen*NF*.ttf')):
+          for path in sorted(Path('build-3.5.1').glob('HackGen*NF*.ttf')):
               style = 'Bold' if path.name.endswith('-Bold.ttf') else 'Regular'
-              font = TTFont(str(path))
-              cmap = font.getBestCmap() or {}
-              actual = set(cmap)
-              missing = sorted(expected[style] - actual)
-              print(path.name, 'glyphs=', len(font.getGlyphOrder()), 'mapped=', len(cmap), 'max=U+%X' % max(cmap))
-              print('  Nerd source codepoints=', len(expected[style]), 'missing=', len(missing))
-              if missing:
-                  failed = True
-                  preview = ' '.join('U+%04X' % cp for cp in missing[:40])
-                  print('  Missing:', preview)
-                  if len(missing) > 40:
-                      print('  ... and', len(missing) - 40, 'more')
-
+              cmap = TTFont(str(path)).getBestCmap() or {}
+              missing = sorted(expected[style] - set(cmap))
+              print(path.name, 'Nerd source=', len(expected[style]), 'missing=', len(missing))
+              failed |= bool(missing)
           if failed:
               raise SystemExit('Generated NF fonts do not preserve all Nerd Fonts 3.5.1 codepoints')
           PY
+
+      - name: Compare 3.3.0 and 3.5.1 builds
+        run: |
+          python tools/compare_nerd_update.py \
+            --old build-3.3.0 \
+            --new build-3.5.1 \
+            --json nerd-update-comparison.json
 
       - name: Upload fonts and diagnostics
         if: always()
@@ -148,6 +121,8 @@ jobs:
         with:
           name: hackgen-nerd-fonts-3.5.1-test
           path: |
-            build/*.ttf
+            build-3.5.1/*.ttf
+            build-nerd-fonts-3.3.0.log
             build-nerd-fonts-3.5.1.log
+            nerd-update-comparison.json
           if-no-files-found: warn
