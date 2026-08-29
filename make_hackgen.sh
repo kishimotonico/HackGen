@@ -15,3 +15,4 @@ function mvBuild() {
 && "${BASE_DIR}/os2_patch.sh" "$PREFIX" \
 && "${BASE_DIR}/cmap_patch.sh" "$PREFIX" \
 && mvBuild
+
