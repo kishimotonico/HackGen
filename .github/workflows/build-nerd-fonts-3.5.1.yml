@@ -7,6 +7,7 @@ on:
       - ci/build-fonts
     paths:
       - '.github/workflows/build-nerd-fonts-3.5.1.yml'
+      - 'tools/prepare_nerd_fonts.sh'
       - 'tools/compare_nerd_update.py'
       - 'hackgen_generator.sh'
       - 'make_hackgen.sh'
@@ -35,38 +36,14 @@ jobs:
       - name: Install Python tools
         run: python -m pip install 'fonttools==3.44.0'
 
-      - name: Build v2.10 baseline with Nerd Fonts 3.3.0
+      - name: Build baseline with Nerd Fonts 3.3.0
         run: |
           chmod +x make_hackgen.sh hackgen_generator.sh copyright.sh os2_patch.sh cmap_patch.sh
           ./make_hackgen.sh 2>&1 | tee build-nerd-fonts-3.3.0.log
           mv build build-3.3.0
 
-      - name: Download Nerd Fonts 3.5.1 Hack
-        run: |
-          curl --fail --location --retry 3 \
-            --output /tmp/Hack.zip \
-            https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/Hack.zip
-          echo 'fa24da7de7cefe7766614d27762570b20453c852fc1d5b657111666df9a5e449  /tmp/Hack.zip' | sha256sum --check -
-          mkdir -p /tmp/nerd-hack
-          unzip -q /tmp/Hack.zip -d /tmp/nerd-hack
-
-      - name: Select Nerd Font source files
-        run: |
-          regular=$(find /tmp/nerd-hack -maxdepth 1 -type f -name 'HackNerdFont-Regular.ttf' | head -n 1)
-          bold=$(find /tmp/nerd-hack -maxdepth 1 -type f -name 'HackNerdFont-Bold.ttf' | head -n 1)
-          test -n "$regular"
-          test -n "$bold"
-          cp "$regular" source/HackNerdFont-Regular.ttf
-          cp "$bold" source/HackNerdFont-Bold.ttf
-
-      - name: Apply Nerd Fonts 3.5.1 glyph ranges
-        run: |
-          sed -i \
-            -e 's/SelectMore(0uE5FA, 0uE6B7)/SelectMore(0uE5FA, 0uE6FF)/' \
-            -e 's/SelectMore(0uE700, 0uE8E3)/SelectMore(0uE700, 0uE958)/' \
-            -e 's/SelectMore(0uF300, 0uF381)/SelectMore(0uF300, 0uF385)/' \
-            -e 's/SelectMore(0uEA60, 0uEC1E)/SelectMore(0uEA60, 0uEC84)/' \
-            hackgen_generator.sh
+      - name: Prepare Nerd Fonts 3.5.1
+        run: tools/prepare_nerd_fonts.sh
 
       - name: Record Nerd Font source coverage
         run: |
