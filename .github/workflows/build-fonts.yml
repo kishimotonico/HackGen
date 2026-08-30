@@ -11,6 +11,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Pin historical HackGen version
+        run: sed -i 's/hackgen_version="2.11.0"/hackgen_version="2.10.0"/' make_hackgen.sh
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
