@@ -1,0 +1,105 @@
+name: Build with Nerd Fonts 3.5.1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ci/build-fonts
+    paths:
+      - '.github/workflows/build-nerd-fonts-3.5.1.yml'
+      - 'tools/prepare_nerd_fonts.sh'
+      - 'tools/compare_nerd_update.py'
+      - 'hackgen_generator.sh'
+      - 'make_hackgen.sh'
+      - 'copyright.sh'
+      - 'os2_patch.sh'
+      - 'cmap_patch.sh'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fontforge ttfautohint unzip
+
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install Python tools
+        run: python -m pip install 'fonttools==3.44.0'
+
+      - name: Build baseline with Nerd Fonts 3.3.0
+        run: |
+          chmod +x make_hackgen.sh hackgen_generator.sh copyright.sh os2_patch.sh cmap_patch.sh
+          ./make_hackgen.sh 2>&1 | tee build-nerd-fonts-3.3.0.log
+          mv build build-3.3.0
+
+      - name: Prepare Nerd Fonts 3.5.1
+        run: tools/prepare_nerd_fonts.sh
+
+      - name: Record Nerd Font source coverage
+        run: |
+          python - <<'PY'
+          import json
+          from fontTools.ttLib import TTFont
+          specials = {0x23FB, 0x23FC, 0x23FD, 0x23FE, 0x2630, 0x2665, 0x26A1, 0x2B58}
+          expected = {}
+          for style in ('Regular', 'Bold'):
+              cmap = TTFont('source/HackNerdFont-%s.ttf' % style).getBestCmap() or {}
+              expected[style] = sorted(cp for cp in cmap if (0xE000 <= cp <= 0xF8FF) or (0xF0000 <= cp <= 0xFFFFD) or cp in specials)
+              print(style, 'Nerd glyph coverage:', len(expected[style]))
+          with open('/tmp/nerd-fonts-3.5.1-coverage.json', 'w') as f:
+              json.dump(expected, f)
+          PY
+
+      - name: Build HackGen with Nerd Fonts 3.5.1
+        run: |
+          ./make_hackgen.sh 2>&1 | tee build-nerd-fonts-3.5.1.log
+          mv build build-3.5.1
+
+      - name: Verify generated fonts
+        run: |
+          test "$(find build-3.5.1 -maxdepth 1 -type f -name 'HackGen*.ttf' | wc -l)" -eq 12
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from fontTools.ttLib import TTFont
+          with open('/tmp/nerd-fonts-3.5.1-coverage.json') as f:
+              expected = {style: set(cps) for style, cps in json.load(f).items()}
+          failed = False
+          for path in sorted(Path('build-3.5.1').glob('HackGen*NF*.ttf')):
+              style = 'Bold' if path.name.endswith('-Bold.ttf') else 'Regular'
+              cmap = TTFont(str(path)).getBestCmap() or {}
+              missing = sorted(expected[style] - set(cmap))
+              print(path.name, 'Nerd source=', len(expected[style]), 'missing=', len(missing))
+              failed |= bool(missing)
+          if failed:
+              raise SystemExit('Generated NF fonts do not preserve all Nerd Fonts 3.5.1 codepoints')
+          PY
+
+      - name: Compare 3.3.0 and 3.5.1 builds
+        run: |
+          python tools/compare_nerd_update.py \
+            --old build-3.3.0 \
+            --new build-3.5.1 \
+            --json nerd-update-comparison.json
+
+      - name: Upload fonts and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hackgen-nerd-fonts-3.5.1-test
+          path: |
+            build-3.5.1/*.ttf
+            build-nerd-fonts-3.3.0.log
+            build-nerd-fonts-3.5.1.log
+            nerd-update-comparison.json
+          if-no-files-found: warn

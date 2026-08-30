@@ -1,0 +1,67 @@
+name: Release HackGen
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate tag
+        run: |
+          version=$(sed -n 's/^hackgen_version="\([^"]*\)"/\1/p' make_hackgen.sh)
+          test "v${version}" = "${GITHUB_REF_NAME}"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fontforge ttfautohint unzip zip
+
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8'
+
+      - name: Install Python tools
+        run: python -m pip install 'fonttools==3.44.0'
+
+      - name: Prepare Nerd Fonts
+        run: tools/prepare_nerd_fonts.sh
+
+      - name: Build fonts
+        run: |
+          chmod +x make_hackgen.sh hackgen_generator.sh copyright.sh os2_patch.sh cmap_patch.sh
+          ./make_hackgen.sh
+          test "$(find build -maxdepth 1 -type f -name 'HackGen*.ttf' | wc -l)" -eq 12
+
+      - name: Package fonts
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          mkdir -p dist/normal dist/nf
+          find build -maxdepth 1 -type f -name 'HackGen*.ttf' ! -name '*NF-*.ttf' -exec cp {} dist/normal/ \;
+          find build -maxdepth 1 -type f -name 'HackGen*NF-*.ttf' -exec cp {} dist/nf/ \;
+          test "$(find dist/normal -type f -name '*.ttf' | wc -l)" -eq 8
+          test "$(find dist/nf -type f -name '*.ttf' | wc -l)" -eq 4
+          (cd dist/normal && zip -9 "../HackGen_v${version}.zip" ./*.ttf)
+          (cd dist/nf && zip -9 "../HackGen_NF_v${version}.zip" ./*.ttf)
+          sha256sum dist/*.zip
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/HackGen_v*.zip \
+            dist/HackGen_NF_v*.zip \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "HackGen ${GITHUB_REF_NAME}" \
+            --generate-notes
